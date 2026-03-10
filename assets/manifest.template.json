@@ -1,0 +1,45 @@
+{
+  "Name": "StreamDeck Custom API",
+  "Description": "Dynamic keys/pages backed by the Amadeus Custom API layout and state endpoints.",
+  "Author": "Loevano",
+  "CodePath": "dist/main.js",
+  "Icon": "images/plugin/icon",
+  "URL": "https://github.com/Loevano/StreamDeck_Custom_API",
+  "Category": "Custom API",
+  "CategoryIcon": "images/plugin/icon",
+  "Version": "0.1.0",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.6"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "10.15"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "Actions": [
+    {
+      "Name": "Dynamic API Key",
+      "UUID": "com.loevano.streamdeckcustomapi.dynamic-key",
+      "Icon": "images/actions/dynamic/key",
+      "Tooltip": "Runs the mapped API route from the active layout key",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "images/actions/dynamic/key",
+          "TitleAlignment": "middle",
+          "FontSize": "14"
+        }
+      ]
+    }
+  ]
+}
