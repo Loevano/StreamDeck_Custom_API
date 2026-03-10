@@ -294,6 +294,221 @@ function ensureBackKey(page: LayoutPage, rows: number, columns: number): void {
   });
 }
 
+function ensureFolderKey(
+  parent: LayoutPage,
+  child: LayoutPage,
+  rows: number,
+  columns: number,
+  preferredIndex: number
+): void {
+  if (parent.keys.some((key) => key.kind === "folder" && key.targetPageId === child.id)) {
+    return;
+  }
+
+  const used = new Set(parent.keys.map((key) => slotId(key.row, key.column)));
+  const preferredRow = Math.floor(preferredIndex / columns);
+  const preferredColumn = preferredIndex % columns;
+
+  let slot: { row: number; column: number } | null = null;
+  if (preferredRow < rows) {
+    slot = findFreeSlot(used, rows, columns, preferredRow, preferredColumn);
+  }
+
+  if (!slot) {
+    slot = findFreeSlot(used, rows, columns, rows - 1, Math.max(0, columns - 2));
+  }
+
+  if (!slot) {
+    return;
+  }
+
+  parent.keys.push({
+    id: buildStableKeyId(parent.id, slot.row, slot.column, `__folder__${child.id}`, child.title, preferredIndex),
+    row: slot.row,
+    column: slot.column,
+    title: child.title ?? child.id,
+    kind: "folder",
+    targetPageId: child.id
+  });
+}
+
+function pageText(page: LayoutPage): string {
+  return `${page.id} ${page.title ?? ""}`.toLowerCase();
+}
+
+function pageHasTokens(page: LayoutPage, requiredTokens: string[]): boolean {
+  const text = pageText(page);
+  return requiredTokens.every((token) => text.includes(token));
+}
+
+function splitModulatorsOutOfConfig(pages: LayoutPage[]): LayoutPage[] {
+  const hasExplicitModulatorsPage = pages.some(
+    (page) => pageHasTokens(page, ["modulator"]) || pageHasTokens(page, ["lfo"])
+  );
+
+  if (hasExplicitModulatorsPage) {
+    return pages;
+  }
+
+  const updated: LayoutPage[] = [];
+
+  pages.forEach((page) => {
+    updated.push(page);
+
+    const isConfigPage = pageHasTokens(page, ["config"]) || pageHasTokens(page, ["setting"]);
+    if (!isConfigPage) {
+      return;
+    }
+
+    const lfoKeys = page.keys.filter((key) => {
+      const path = key.route?.path ?? "";
+      return /\/lfos?(\/|$)/i.test(path);
+    });
+
+    if (lfoKeys.length === 0) {
+      return;
+    }
+
+    page.keys = page.keys.filter((key) => !lfoKeys.includes(key));
+
+    updated.push({
+      id: `${page.id}-modulators`,
+      title: "Modulators",
+      parentPageId: page.id,
+      stateLayoutId: page.stateLayoutId ?? page.id,
+      keys: lfoKeys
+    });
+  });
+
+  return updated;
+}
+
+function splitGroupHideOutOfEnablePages(pages: LayoutPage[]): LayoutPage[] {
+  const hasExplicitGroupHidePage = pages.some((page) => pageHasTokens(page, ["group", "hide"]));
+  if (hasExplicitGroupHidePage) {
+    return pages;
+  }
+
+  const updated: LayoutPage[] = [];
+
+  pages.forEach((page) => {
+    updated.push(page);
+
+    const isGroupPage = pageHasTokens(page, ["group"]);
+    if (!isGroupPage) {
+      return;
+    }
+
+    const hideKeys = page.keys.filter((key) => {
+      const path = key.route?.path ?? "";
+      return /\/group\/[^/]+\/hide\/(on|off|toggle)/i.test(path) || /\/groups\/hide\/(on|off|toggle)/i.test(path);
+    });
+
+    const enableKeys = page.keys.filter((key) => {
+      const path = key.route?.path ?? "";
+      return /\/group\/[^/]+\/enabled\/(on|off|toggle)/i.test(path) || /\/groups\/enabled\/(on|off|toggle)/i.test(path);
+    });
+
+    if (hideKeys.length === 0 || enableKeys.length === 0) {
+      return;
+    }
+
+    page.keys = page.keys.filter((key) => !hideKeys.includes(key));
+
+    const hiddenPageTitle = page.title
+      ? page.title.replace(/enable/gi, "Hide").replace(/enabled/gi, "Hide")
+      : "Group Hide";
+
+    updated.push({
+      id: `${page.id}-hide`,
+      title: hiddenPageTitle,
+      parentPageId: page.id,
+      stateLayoutId: page.stateLayoutId ?? page.id,
+      keys: hideKeys
+    });
+  });
+
+  return updated;
+}
+
+function applySubpageHints(pages: LayoutPage[]): void {
+  const findPage = (requiredTokens: string[]): LayoutPage | undefined =>
+    pages.find((page) => pageHasTokens(page, requiredTokens));
+
+  const objSelect = findPage(["obj", "select"]);
+  const objHide = findPage(["obj", "hide"]);
+  if (objSelect && objHide && !objHide.parentPageId && objSelect.id !== objHide.id) {
+    objHide.parentPageId = objSelect.id;
+  }
+
+  const groupEnable = findPage(["group", "enable"]);
+  const groupHide = findPage(["group", "hide"]);
+  if (groupEnable && groupHide && !groupHide.parentPageId && groupEnable.id !== groupHide.id) {
+    groupHide.parentPageId = groupEnable.id;
+  }
+
+  const settings = findPage(["config"]) ?? findPage(["setting"]);
+  const modulators = findPage(["modulator"]) ?? findPage(["lfo"]);
+  if (settings && modulators && !modulators.parentPageId && settings.id !== modulators.id) {
+    modulators.parentPageId = settings.id;
+  }
+}
+
+function applyNavigationHierarchy(
+  pages: Record<string, LayoutPage>,
+  rootPageId: string,
+  rootTitle: string,
+  rows: number,
+  columns: number,
+  orderByPageId: Map<string, number>
+): void {
+  if (!pages[rootPageId]) {
+    pages[rootPageId] = {
+      id: rootPageId,
+      title: rootTitle,
+      keys: []
+    };
+  }
+
+  const childrenByParent = new Map<string, string[]>();
+
+  Object.values(pages).forEach((page) => {
+    if (page.id === rootPageId) {
+      return;
+    }
+
+    const requestedParentId = page.parentPageId;
+    const parentId =
+      requestedParentId && requestedParentId !== page.id && pages[requestedParentId]
+        ? requestedParentId
+        : rootPageId;
+
+    page.parentPageId = parentId;
+    ensureBackKey(page, rows, columns);
+
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(page.id);
+    childrenByParent.set(parentId, children);
+  });
+
+  childrenByParent.forEach((childPageIds, parentId) => {
+    const parent = pages[parentId];
+    if (!parent) {
+      return;
+    }
+
+    childPageIds
+      .sort((leftId, rightId) => (orderByPageId.get(leftId) ?? 0) - (orderByPageId.get(rightId) ?? 0))
+      .forEach((childPageId, index) => {
+        const child = pages[childPageId];
+        if (!child) {
+          return;
+        }
+        ensureFolderKey(parent, child, rows, columns, index);
+      });
+  });
+}
+
 function normalizeLayoutsArrayRoot(root: Record<string, unknown>): LayoutDefinition {
   const layouts = Array.isArray(root.layouts) ? root.layouts : [];
   const device = asRecord(root.device);
@@ -301,9 +516,9 @@ function normalizeLayoutsArrayRoot(root: Record<string, unknown>): LayoutDefinit
   const columns = asNumber(device?.columns) ?? asNumber(root.columns) ?? 8;
   const rows = asNumber(device?.rows) ?? asNumber(root.rows) ?? 4;
 
-  const pages: Record<string, LayoutPage> = {};
-  const rootPageId = "root";
-  const rootKeys: LayoutKey[] = [];
+  const rootPageId = asString(root.rootPageId) ?? "root";
+  const orderedPages: LayoutPage[] = [];
+  const orderByPageId = new Map<string, number>();
 
   let firstPageId: string | undefined;
 
@@ -317,43 +532,36 @@ function normalizeLayoutsArrayRoot(root: Record<string, unknown>): LayoutDefinit
       firstPageId = page.id;
     }
 
-    page.parentPageId = rootPageId;
     page.stateLayoutId = page.stateLayoutId ?? page.id;
-    ensureBackKey(page, rows, columns);
-    pages[page.id] = page;
-
-    const folderRow = Math.floor(index / columns);
-    const folderColumn = index % columns;
-    if (folderRow >= rows) {
-      return;
-    }
-
-    rootKeys.push({
-      id: buildStableKeyId(rootPageId, folderRow, folderColumn, `__folder__${page.id}`, page.title, index),
-      row: folderRow,
-      column: folderColumn,
-      title: page.title ?? `Page ${index + 1}`,
-      kind: "folder",
-      targetPageId: page.id
-    });
+    orderedPages.push(page);
   });
 
-  if (Object.keys(pages).length === 0) {
+  if (orderedPages.length === 0) {
     throw new Error("Layout response did not include usable layouts");
   }
 
-  if (rootKeys.length > 0) {
-    pages[rootPageId] = {
-      id: rootPageId,
-      title: asString(root.title) ?? "Layouts",
-      keys: rootKeys
-    };
-  }
+  const pagesToRender = splitModulatorsOutOfConfig(splitGroupHideOutOfEnablePages(orderedPages));
+  applySubpageHints(pagesToRender);
+
+  const pages: Record<string, LayoutPage> = {};
+  pagesToRender.forEach((page, index) => {
+    pages[page.id] = page;
+    orderByPageId.set(page.id, index);
+  });
+
+  applyNavigationHierarchy(
+    pages,
+    rootPageId,
+    asString(root.title) ?? "Layouts",
+    rows,
+    columns,
+    orderByPageId
+  );
 
   return {
     id: asString(root.id) ?? asString(root.showId) ?? "streamdeck-layouts",
     title: asString(root.title),
-    rootPageId: rootKeys.length > 0 ? rootPageId : (firstPageId as string),
+    rootPageId: pages[rootPageId] ? rootPageId : (firstPageId as string),
     pages
   };
 }
@@ -363,19 +571,21 @@ function normalizeSingleLayout(raw: unknown): LayoutDefinition {
   const device = asRecord(layout.device);
 
   const fallbackColumns = asNumber(layout.columns) ?? asNumber(device?.columns) ?? 5;
+  const fallbackRows = asNumber(layout.rows) ?? asNumber(device?.rows) ?? 3;
 
   const pagesRaw =
     (Array.isArray(layout.pages) ? layout.pages : undefined) ??
     (Array.isArray(layout.screens) ? layout.screens : undefined) ??
     [];
 
-  const pages: Record<string, LayoutPage> = {};
+  const orderedPages: LayoutPage[] = [];
+  const orderByPageId = new Map<string, number>();
 
   if (pagesRaw.length > 0) {
     pagesRaw.forEach((item, index) => {
       const normalized = normalizePage(item, index, fallbackColumns);
       if (normalized) {
-        pages[normalized.id] = normalized;
+        orderedPages.push(normalized);
       }
     });
   } else {
@@ -394,9 +604,18 @@ function normalizeSingleLayout(raw: unknown): LayoutDefinition {
     );
 
     if (fallbackPage) {
-      pages[fallbackPage.id] = fallbackPage;
+      orderedPages.push(fallbackPage);
     }
   }
+
+  const pagesToRender = splitModulatorsOutOfConfig(splitGroupHideOutOfEnablePages(orderedPages));
+  applySubpageHints(pagesToRender);
+
+  const pages: Record<string, LayoutPage> = {};
+  pagesToRender.forEach((page, index) => {
+    pages[page.id] = page;
+    orderByPageId.set(page.id, index);
+  });
 
   const pageIds = Object.keys(pages);
   if (pageIds.length === 0) {
@@ -426,6 +645,15 @@ function normalizeSingleLayout(raw: unknown): LayoutDefinition {
       page.stateLayoutId = layoutId;
     }
   });
+
+  applyNavigationHierarchy(
+    pages,
+    rootPageId,
+    asString(layout.title) ?? "Root",
+    fallbackRows,
+    fallbackColumns,
+    orderByPageId
+  );
 
   return {
     id: layoutId,

@@ -11,6 +11,7 @@ const packageJsonPath = path.join(rootDir, "package.json");
 const manifestTemplatePath = path.join(rootDir, "assets", "manifest.template.json");
 const distDir = path.join(rootDir, "dist");
 const imagesDir = path.join(rootDir, "assets", "images");
+const inspectorDir = path.join(rootDir, "assets", "inspector");
 const releaseDir = path.join(rootDir, "release");
 const nodeModulesDir = path.join(rootDir, "node_modules");
 
@@ -42,6 +43,9 @@ fs.mkdirSync(pluginFolderPath, { recursive: true });
 
 fs.cpSync(distDir, path.join(pluginFolderPath, "dist"), { recursive: true });
 fs.cpSync(imagesDir, path.join(pluginFolderPath, "images"), { recursive: true });
+if (fs.existsSync(inspectorDir)) {
+  fs.cpSync(inspectorDir, path.join(pluginFolderPath, "inspector"), { recursive: true });
+}
 fs.writeFileSync(path.join(pluginFolderPath, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
 function readPackageJsonAt(packagePath) {

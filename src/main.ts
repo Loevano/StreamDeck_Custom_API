@@ -20,12 +20,6 @@ async function bootstrap(): Promise<void> {
       },
       setImage: (context: string, image: string): void => {
         logger.info("[dev:setImage]", { context, imagePrefix: image.slice(0, 48) });
-      },
-      showOk: (context: string): void => {
-        logger.info("[dev:showOk]", { context });
-      },
-      showAlert: (context: string): void => {
-        logger.warn("[dev:showAlert]", { context });
       }
     };
 
@@ -38,9 +32,7 @@ async function bootstrap(): Promise<void> {
   const connection = new StreamDeckConnection(args);
   const controller = new RuntimeController(initialConfig, {
     setTitle: (context, title) => connection.setTitle(context, title),
-    setImage: (context, image) => connection.setImage(context, image),
-    showOk: (context) => connection.showOk(context),
-    showAlert: (context) => connection.showAlert(context)
+    setImage: (context, image) => connection.setImage(context, image)
   });
 
   await connection.connect((message) => {

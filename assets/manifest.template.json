@@ -31,6 +31,7 @@
       "Name": "Dynamic API Key",
       "UUID": "com.loevano.streamdeckcustomapi.dynamic-key",
       "Icon": "images/actions/dynamic/key",
+      "PropertyInspectorPath": "inspector/dynamic-key.html",
       "Tooltip": "Runs the mapped API route from the active layout key",
       "Controllers": ["Keypad"],
       "States": [

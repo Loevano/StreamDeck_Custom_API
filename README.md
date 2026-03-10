@@ -10,8 +10,12 @@ TypeScript/Node Stream Deck plugin scaffold that reads layout/state from a Custo
 - Renders keys by position (`row`/`column`) with runtime title and color
 - Supports key action routing (`GET`/`POST`) on key press
 - Supports folder-style page navigation (`targetPageId`) and back keys
+- Supports API parent/child page trees and auto-wires folder keys for subpages when needed
+- Auto-splits mixed group pages into separate Group Enable / Group Hide pages when both route types are present
+- Auto-splits LFO controls from config/settings pages into a dedicated `Modulators` subpage when no explicit modulators page is provided
 - Polls layout periodically so new API objects/groups/actions appear without profile reimport
 - Shows clear offline visual state if API calls fail
+- Uses text-first key rendering with no success/error overlay icons; empty slots are transparent
 
 ## Project structure
 
@@ -148,6 +152,24 @@ Optional environment settings:
 - `STREAMDECK_LAYOUT_POLL_MS` (default `5000`)
 - `STREAMDECK_STATE_POLL_MS` (default `1000`)
 - `STREAMDECK_API_TIMEOUT_MS` (default `2500`)
+
+## Config tab section
+
+The action Property Inspector now includes a dedicated section:
+
+- `Stream Deck Layout Configuration`
+
+It reads from:
+
+- `GET /api/hardware/streamdeck/configuration`
+
+and shows:
+
+- layout mode and grid size
+- page count and total button count
+- per-page table (index, title, layout id, button count)
+
+Use the same panel to save `apiBaseUrl` to Stream Deck global settings and refresh the layout configuration view.
 
 ## Local dev mode (hot reload)
 

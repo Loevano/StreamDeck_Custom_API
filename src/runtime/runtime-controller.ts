@@ -1,7 +1,7 @@
 import { CustomApiClient } from "../api/custom-api-client";
 import { mergeGlobalSettings } from "../config";
 import { logger } from "../logger";
-import { buildKeyImage } from "../streamdeck/key-image";
+import { buildEmptyKeyImage, buildKeyImage } from "../streamdeck/key-image";
 import {
   DeviceInfo,
   GlobalSettings,
@@ -19,8 +19,6 @@ import { NavigationStore } from "./navigation-store";
 interface StreamDeckRenderer {
   setImage(context: string, image: string): void;
   setTitle(context: string, title: string): void;
-  showOk(context: string): void;
-  showAlert(context: string): void;
 }
 
 interface RenderOptions {
@@ -28,6 +26,7 @@ interface RenderOptions {
   subtitle?: string;
   state: KeyVisualState;
   color?: string;
+  empty?: boolean;
 }
 
 export class RuntimeController {
@@ -224,7 +223,7 @@ export class RuntimeController {
     }
 
     if (!this.layout) {
-      this.renderer.showAlert(message.context);
+      logger.warn("Ignoring key press because layout is not loaded yet");
       return;
     }
 
@@ -235,20 +234,27 @@ export class RuntimeController {
 
     const keyDefinition = this.resolveKeyForRegisteredContext(registration);
     if (!keyDefinition) {
-      this.renderer.showAlert(message.context);
+      logger.warn("Ignoring key press because no key is mapped at this slot", {
+        context: message.context,
+        device: registration.device,
+        row: registration.coordinates.row,
+        column: registration.coordinates.column
+      });
       return;
     }
 
     const keyState = this.layoutState.byKeyId[keyDefinition.id];
     if (keyState?.state === "disabled") {
-      this.renderer.showAlert(message.context);
+      logger.warn("Ignoring key press on disabled key", {
+        keyId: keyDefinition.id,
+        keyTitle: keyDefinition.title
+      });
       return;
     }
 
     if (keyDefinition.kind === "back") {
       this.navigation.goBack(registration.device);
       this.renderDevice(registration.device);
-      this.renderer.showOk(message.context);
       await this.refreshState({ forceRender: true });
       return;
     }
@@ -256,13 +262,16 @@ export class RuntimeController {
     if (keyDefinition.kind === "folder" && keyDefinition.targetPageId) {
       this.navigation.enterPage(registration.device, keyDefinition.targetPageId, this.layout.rootPageId);
       this.renderDevice(registration.device);
-      this.renderer.showOk(message.context);
       await this.refreshState({ forceRender: true });
       return;
     }
 
     if (!keyDefinition.route) {
-      this.renderer.showAlert(message.context);
+      logger.warn("Ignoring key press because key has no route", {
+        keyId: keyDefinition.id,
+        keyTitle: keyDefinition.title,
+        kind: keyDefinition.kind
+      });
       return;
     }
 
@@ -274,7 +283,6 @@ export class RuntimeController {
         path: keyDefinition.route.path
       });
       await this.apiClient.invokeRoute(keyDefinition.route);
-      this.renderer.showOk(message.context);
 
       await this.refreshLayout({ forceRender: false });
       await this.refreshState({ forceRender: true });
@@ -284,7 +292,6 @@ export class RuntimeController {
         route: keyDefinition.route,
         error
       });
-      this.renderer.showAlert(message.context);
     }
   }
 
@@ -416,7 +423,12 @@ export class RuntimeController {
     }
 
     const render = this.buildRenderOptions(registration);
-    this.renderer.setTitle(context, render.title);
+    this.renderer.setTitle(context, "");
+    if (render.empty) {
+      this.renderer.setImage(context, buildEmptyKeyImage());
+      return;
+    }
+
     this.renderer.setImage(
       context,
       buildKeyImage({
@@ -453,7 +465,8 @@ export class RuntimeController {
         title: "",
         subtitle: "",
         state: "inactive",
-        color: "#111111"
+        color: "#111111",
+        empty: true
       };
     }
 
@@ -487,17 +500,12 @@ export class RuntimeController {
       return undefined;
     }
 
-    const stateWord = runtimeState.state.toUpperCase();
     const label = runtimeState.label?.trim();
-    if (!label || label === "-") {
-      return stateWord;
-    }
-
-    if (label.toUpperCase() === stateWord) {
+    if (label && label !== "-") {
       return label;
     }
 
-    return `${label} ${stateWord}`;
+    return runtimeState.state.toUpperCase();
   }
 
   private defaultTitleForKey(key: LayoutKey): string {
