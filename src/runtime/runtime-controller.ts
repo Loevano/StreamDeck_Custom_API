@@ -11,6 +11,7 @@ import {
   LayoutRuntimeState,
   PluginConfig,
   RegisteredKey,
+  RuntimeKeyState,
   StreamDeckIncomingMessage
 } from "../types";
 import { NavigationStore } from "./navigation-store";
@@ -266,6 +267,12 @@ export class RuntimeController {
     }
 
     try {
+      logger.info("Invoking API route from key press", {
+        keyId: keyDefinition.id,
+        keyTitle: keyDefinition.title,
+        method: keyDefinition.route.method,
+        path: keyDefinition.route.path
+      });
       await this.apiClient.invokeRoute(keyDefinition.route);
       this.renderer.showOk(message.context);
 
@@ -452,8 +459,8 @@ export class RuntimeController {
 
     const runtimeState = this.layoutState.byKeyId[key.id];
 
-    let title = runtimeState?.label ?? key.title ?? this.defaultTitleForKey(key);
-    let subtitle = key.group;
+    let title = key.title ?? this.defaultTitleForKey(key);
+    let subtitle = this.formatStatusText(runtimeState) ?? key.group;
     let state: KeyVisualState = runtimeState?.state ?? "inactive";
 
     if (key.kind === "folder") {
@@ -473,6 +480,24 @@ export class RuntimeController {
       state,
       color: runtimeState?.color
     };
+  }
+
+  private formatStatusText(runtimeState?: RuntimeKeyState): string | undefined {
+    if (!runtimeState) {
+      return undefined;
+    }
+
+    const stateWord = runtimeState.state.toUpperCase();
+    const label = runtimeState.label?.trim();
+    if (!label || label === "-") {
+      return stateWord;
+    }
+
+    if (label.toUpperCase() === stateWord) {
+      return label;
+    }
+
+    return `${label} ${stateWord}`;
   }
 
   private defaultTitleForKey(key: LayoutKey): string {

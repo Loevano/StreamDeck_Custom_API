@@ -11,6 +11,7 @@
     "package": "node scripts/package-plugin.mjs",
     "build": "npm run clean && npm run build:ts && npm run package",
     "release": "npm run build",
+    "api:map": "node scripts/generate-api-map.mjs",
     "dev": "tsx watch src/main.ts -- --dev",
     "start": "node dist/main.js"
   },

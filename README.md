@@ -22,6 +22,7 @@ TypeScript/Node Stream Deck plugin scaffold that reads layout/state from a Custo
 - `src/streamdeck/connection.ts`: Stream Deck WebSocket protocol connection
 - `src/streamdeck/key-image.ts`: dynamic SVG key rendering (state color + label)
 - `scripts/package-plugin.mjs`: builds `.streamDeckPlugin` artifact
+- `scripts/generate-api-map.mjs`: generates a key-to-endpoint API map markdown file
 - `assets/manifest.template.json`: Stream Deck manifest template
 
 ## Expected API shape
@@ -113,6 +114,26 @@ State:
 ```
 
 Supported visual states: `active`, `inactive`, `mixed`, `disabled`.
+
+## API visibility
+
+Generate a clear key-to-endpoint map from the live API:
+
+```bash
+npm run api:map
+```
+
+Output file:
+
+- `API_ROUTE_MAP.md`
+
+Optional arguments:
+
+```bash
+npm run api:map -- --base-url http://127.0.0.1:8787 --out API_ROUTE_MAP.md
+```
+
+At runtime, key presses also log the invoked API method/path in plugin logs.
 
 ## Configure API URL
 
