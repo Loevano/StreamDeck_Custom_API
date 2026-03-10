@@ -26,7 +26,7 @@ TypeScript/Node Stream Deck plugin scaffold that reads layout/state from a Custo
 
 ## Expected API shape
 
-The parser is tolerant, but this canonical shape is recommended.
+The parser supports both canonical page/key payloads and the current Amadeus `layouts/buttons` payload.
 
 ### Layout endpoint
 
@@ -74,6 +74,41 @@ The parser is tolerant, but this canonical shape is recommended.
       "color": "#2E9F45"
     }
   }
+}
+```
+
+### Amadeus shape (also supported)
+
+Layout:
+
+```json
+{
+  "device": { "columns": 8, "rows": 4 },
+  "layouts": [
+    {
+      "layoutId": "xl-page-1-obj-select",
+      "title": "Page 1 - Obj Select",
+      "buttons": [
+        { "row": 0, "col": 0, "title": "Status", "method": "GET", "path": "/api/hardware/streamdeck/status" }
+      ]
+    }
+  ]
+}
+```
+
+State:
+
+```json
+{
+  "layoutId": "xl-page-1-obj-select",
+  "buttons": [
+    {
+      "row": 0,
+      "col": 0,
+      "path": "/api/hardware/streamdeck/status",
+      "state": { "state": "active", "label": "LIVE", "color": "#1f8f5f" }
+    }
+  ]
 }
 ```
 

@@ -64,7 +64,7 @@ export class CustomApiClient {
     }
 
     const data = await parseJsonOrText(response);
-    return normalizeStateResponse(data);
+    return normalizeStateResponse(data, layoutId);
   }
 
   async invokeRoute(route: ApiRoute): Promise<unknown> {

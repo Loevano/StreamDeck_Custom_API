@@ -41,6 +41,22 @@ function asBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function normalizeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9/_-]+/g, "-");
+}
+
+function buildStableKeyId(
+  pageId: string,
+  row: number,
+  column: number,
+  routePath?: string,
+  title?: string,
+  index = 0
+): string {
+  const basis = routePath ?? title ?? `idx-${index}`;
+  return `${pageId}::${row}:${column}::${normalizeToken(basis)}`;
+}
+
 function extractLayoutCandidate(raw: unknown): Record<string, unknown> {
   if (Array.isArray(raw) && raw.length > 0) {
     const first = asRecord(raw[0]);
@@ -57,13 +73,6 @@ function extractLayoutCandidate(raw: unknown): Record<string, unknown> {
   const nestedLayout = asRecord(root.layout);
   if (nestedLayout) {
     return nestedLayout;
-  }
-
-  if (Array.isArray(root.layouts) && root.layouts.length > 0) {
-    const first = asRecord(root.layouts[0]);
-    if (first) {
-      return first;
-    }
   }
 
   return root;
@@ -131,12 +140,6 @@ function normalizeKey(
     return null;
   }
 
-  const id =
-    asString(key.id) ??
-    asString(key.keyId) ??
-    asString(key.uuid) ??
-    `${pageId}-key-${index}`;
-
   const position = asRecord(key.position) ?? asRecord(key.coordinates);
   const slot = asNumber(key.slot) ?? asNumber(key.index);
 
@@ -161,6 +164,8 @@ function normalizeKey(
     column = index % fallbackColumns;
   }
 
+  const title = asString(key.title) ?? asString(key.label) ?? asString(key.name);
+
   const targetPageId =
     asString(key.targetPageId) ??
     asString(key.childPageId) ??
@@ -176,11 +181,21 @@ function normalizeKey(
       body: key.body
     });
 
+  const explicitId =
+    asString(key.id) ??
+    asString(key.keyId) ??
+    asString(key.uuid) ??
+    asString(key.buttonId);
+
+  const id =
+    explicitId ??
+    buildStableKeyId(pageId, row, column, route?.path, title, index);
+
   const normalized: LayoutKey = {
     id,
     row,
     column,
-    title: asString(key.title) ?? asString(key.label) ?? asString(key.name),
+    title,
     group: asString(key.group) ?? asString(key.groupId),
     kind: detectKind(key, targetPageId, route),
     route,
@@ -204,7 +219,11 @@ function normalizePage(raw: unknown, index: number, fallbackColumns: number): La
     return null;
   }
 
-  const pageId = asString(page.id) ?? asString(page.pageId) ?? `page-${index}`;
+  const pageId =
+    asString(page.id) ??
+    asString(page.pageId) ??
+    asString(page.layoutId) ??
+    `page-${index}`;
 
   const keysRaw =
     (Array.isArray(page.keys) ? page.keys : undefined) ??
@@ -224,59 +243,126 @@ function normalizePage(raw: unknown, index: number, fallbackColumns: number): La
     id: pageId,
     title: asString(page.title) ?? asString(page.name),
     parentPageId: asString(page.parentPageId) ?? asString(page.parentId),
+    stateLayoutId: asString(page.stateLayoutId) ?? asString(page.layoutId),
     keys
   };
 }
 
-function normalizeVisualState(value: unknown): KeyVisualState {
-  const candidate = asString(value)?.toLowerCase();
-  if (candidate === "active" || candidate === "inactive" || candidate === "mixed" || candidate === "disabled") {
-    return candidate;
-  }
-  return "inactive";
+function slotId(row: number, column: number): string {
+  return `${row}:${column}`;
 }
 
-function normalizeStateEntry(raw: unknown, keyIdFromMap?: string): RuntimeKeyState | null {
-  const entry = asRecord(raw);
-  if (!entry && keyIdFromMap === undefined) {
-    return null;
+function findFreeSlot(
+  used: Set<string>,
+  rows: number,
+  columns: number,
+  preferredRow: number,
+  preferredColumn: number
+): { row: number; column: number } | null {
+  if (!used.has(slotId(preferredRow, preferredColumn))) {
+    return { row: preferredRow, column: preferredColumn };
   }
 
-  const keyId =
-    keyIdFromMap ??
-    asString(entry?.keyId) ??
-    asString(entry?.id) ??
-    asString(entry?.uuid);
-
-  if (!keyId) {
-    return null;
+  for (let row = rows - 1; row >= 0; row -= 1) {
+    for (let column = columns - 1; column >= 0; column -= 1) {
+      if (!used.has(slotId(row, column))) {
+        return { row, column };
+      }
+    }
   }
 
-  const explicitDisabled = asBoolean(entry?.disabled);
-  const explicitActive = asBoolean(entry?.active);
+  return null;
+}
 
-  let state = normalizeVisualState(entry?.state ?? entry?.status ?? entry?.mode);
+function ensureBackKey(page: LayoutPage, rows: number, columns: number): void {
+  if (page.keys.some((key) => key.kind === "back")) {
+    return;
+  }
 
-  if (explicitDisabled === true) {
-    state = "disabled";
-  } else if (explicitActive === true) {
-    state = "active";
-  } else if (explicitActive === false && state === "active") {
-    state = "inactive";
+  const used = new Set(page.keys.map((key) => slotId(key.row, key.column)));
+  const slot = findFreeSlot(used, rows, columns, rows - 1, columns - 1);
+  if (!slot) {
+    return;
+  }
+
+  page.keys.push({
+    id: buildStableKeyId(page.id, slot.row, slot.column, "__back__", "Back"),
+    row: slot.row,
+    column: slot.column,
+    title: "Back",
+    kind: "back"
+  });
+}
+
+function normalizeLayoutsArrayRoot(root: Record<string, unknown>): LayoutDefinition {
+  const layouts = Array.isArray(root.layouts) ? root.layouts : [];
+  const device = asRecord(root.device);
+
+  const columns = asNumber(device?.columns) ?? asNumber(root.columns) ?? 8;
+  const rows = asNumber(device?.rows) ?? asNumber(root.rows) ?? 4;
+
+  const pages: Record<string, LayoutPage> = {};
+  const rootPageId = "root";
+  const rootKeys: LayoutKey[] = [];
+
+  let firstPageId: string | undefined;
+
+  layouts.forEach((item, index) => {
+    const page = normalizePage(item, index, columns);
+    if (!page) {
+      return;
+    }
+
+    if (!firstPageId) {
+      firstPageId = page.id;
+    }
+
+    page.parentPageId = rootPageId;
+    page.stateLayoutId = page.stateLayoutId ?? page.id;
+    ensureBackKey(page, rows, columns);
+    pages[page.id] = page;
+
+    const folderRow = Math.floor(index / columns);
+    const folderColumn = index % columns;
+    if (folderRow >= rows) {
+      return;
+    }
+
+    rootKeys.push({
+      id: buildStableKeyId(rootPageId, folderRow, folderColumn, `__folder__${page.id}`, page.title, index),
+      row: folderRow,
+      column: folderColumn,
+      title: page.title ?? `Page ${index + 1}`,
+      kind: "folder",
+      targetPageId: page.id
+    });
+  });
+
+  if (Object.keys(pages).length === 0) {
+    throw new Error("Layout response did not include usable layouts");
+  }
+
+  if (rootKeys.length > 0) {
+    pages[rootPageId] = {
+      id: rootPageId,
+      title: asString(root.title) ?? "Layouts",
+      keys: rootKeys
+    };
   }
 
   return {
-    keyId,
-    state,
-    label: asString(entry?.label) ?? asString(entry?.title),
-    color: asString(entry?.color) ?? asString(entry?.hex)
+    id: asString(root.id) ?? asString(root.showId) ?? "streamdeck-layouts",
+    title: asString(root.title),
+    rootPageId: rootKeys.length > 0 ? rootPageId : (firstPageId as string),
+    pages
   };
 }
 
-export function normalizeLayoutResponse(raw: unknown): LayoutDefinition {
+function normalizeSingleLayout(raw: unknown): LayoutDefinition {
   const layout = extractLayoutCandidate(raw);
+  const device = asRecord(layout.device);
 
-  const fallbackColumns = asNumber(layout.columns) ?? 5;
+  const fallbackColumns = asNumber(layout.columns) ?? asNumber(device?.columns) ?? 5;
 
   const pagesRaw =
     (Array.isArray(layout.pages) ? layout.pages : undefined) ??
@@ -295,7 +381,8 @@ export function normalizeLayoutResponse(raw: unknown): LayoutDefinition {
   } else {
     const fallbackPage = normalizePage(
       {
-        id: asString(layout.rootPageId) ?? "root",
+        ...layout,
+        id: asString(layout.id) ?? asString(layout.layoutId) ?? asString(layout.rootPageId) ?? "root",
         title: asString(layout.title) ?? "Root",
         keys:
           (Array.isArray(layout.keys) ? layout.keys : undefined) ??
@@ -316,7 +403,10 @@ export function normalizeLayoutResponse(raw: unknown): LayoutDefinition {
     throw new Error("Layout response did not include any pages");
   }
 
-  const rootPageId = asString(layout.rootPageId) ?? pageIds[0];
+  const rootPageId =
+    asString(layout.rootPageId) ??
+    asString(layout.layoutId) ??
+    pageIds[0];
 
   if (!pages[rootPageId]) {
     pages[rootPageId] = {
@@ -326,27 +416,122 @@ export function normalizeLayoutResponse(raw: unknown): LayoutDefinition {
     };
   }
 
+  const layoutId =
+    asString(layout.id) ??
+    asString(layout.layoutId) ??
+    rootPageId;
+
+  Object.values(pages).forEach((page) => {
+    if (!page.stateLayoutId) {
+      page.stateLayoutId = layoutId;
+    }
+  });
+
   return {
-    id: asString(layout.id) ?? "default-layout",
+    id: layoutId,
     title: asString(layout.title),
     rootPageId,
     pages
   };
 }
 
-export function normalizeStateResponse(raw: unknown): LayoutRuntimeState {
+function normalizeVisualState(value: unknown): KeyVisualState {
+  const candidate = asString(value)?.toLowerCase();
+  if (candidate === "active" || candidate === "inactive" || candidate === "mixed" || candidate === "disabled") {
+    return candidate;
+  }
+  return "inactive";
+}
+
+function normalizeStateEntry(raw: unknown, keyIdFromMap?: string, pageIdHint?: string): RuntimeKeyState | null {
+  const entry = asRecord(raw);
+  if (!entry && keyIdFromMap === undefined) {
+    return null;
+  }
+
+  const nestedState = asRecord(entry?.state);
+  const position = asRecord(entry?.position) ?? asRecord(entry?.coordinates);
+
+  const row =
+    asNumber(entry?.row) ??
+    asNumber(entry?.y) ??
+    (position ? asNumber(position.row) ?? asNumber(position.y) : undefined);
+
+  const column =
+    asNumber(entry?.column) ??
+    asNumber(entry?.col) ??
+    asNumber(entry?.x) ??
+    (position ? asNumber(position.column) ?? asNumber(position.col) ?? asNumber(position.x) : undefined);
+
+  const routePath = asString(entry?.path) ?? asString(entry?.url);
+  const fallbackTitle = asString(entry?.title) ?? asString(entry?.label);
+
+  let keyId =
+    keyIdFromMap ??
+    asString(entry?.keyId) ??
+    asString(entry?.id) ??
+    asString(entry?.uuid) ??
+    asString(nestedState?.keyId);
+
+  if (!keyId && pageIdHint !== undefined && row !== undefined && column !== undefined) {
+    keyId = buildStableKeyId(pageIdHint, row, column, routePath, fallbackTitle);
+  }
+
+  if (!keyId) {
+    return null;
+  }
+
+  const explicitDisabled = asBoolean(nestedState?.disabled ?? entry?.disabled);
+  const explicitActive = asBoolean(nestedState?.active ?? entry?.active);
+
+  let state = normalizeVisualState(nestedState?.state ?? entry?.state ?? entry?.status ?? entry?.mode);
+
+  if (explicitDisabled === true) {
+    state = "disabled";
+  } else if (explicitActive === true) {
+    state = "active";
+  } else if (explicitActive === false && state === "active") {
+    state = "inactive";
+  }
+
+  return {
+    keyId,
+    state,
+    label:
+      asString(nestedState?.label) ??
+      asString(entry?.label) ??
+      asString(entry?.title),
+    color:
+      asString(nestedState?.color) ??
+      asString(entry?.color) ??
+      asString(nestedState?.hex) ??
+      asString(entry?.hex)
+  };
+}
+
+export function normalizeLayoutResponse(raw: unknown): LayoutDefinition {
+  const root = asRecord(raw);
+  if (root && Array.isArray(root.layouts) && root.layouts.length > 0) {
+    return normalizeLayoutsArrayRoot(root);
+  }
+
+  return normalizeSingleLayout(raw);
+}
+
+export function normalizeStateResponse(raw: unknown, pageIdHint?: string): LayoutRuntimeState {
   const byKeyId: Record<string, RuntimeKeyState> = {};
 
   const root = asRecord(raw);
 
   const arrayEntries =
-    (Array.isArray(root?.keys) ? root?.keys : undefined) ??
-    (Array.isArray(root?.states) ? root?.states : undefined) ??
+    (Array.isArray(root?.keys) ? root.keys : undefined) ??
+    (Array.isArray(root?.states) ? root.states : undefined) ??
+    (Array.isArray(root?.buttons) ? root.buttons : undefined) ??
     (Array.isArray(raw) ? raw : undefined);
 
   if (arrayEntries) {
     arrayEntries.forEach((entry) => {
-      const normalized = normalizeStateEntry(entry);
+      const normalized = normalizeStateEntry(entry, undefined, pageIdHint);
       if (normalized) {
         byKeyId[normalized.keyId] = normalized;
       }
@@ -365,7 +550,7 @@ export function normalizeStateResponse(raw: unknown): LayoutRuntimeState {
     }
 
     Object.entries(candidate).forEach(([keyId, value]) => {
-      const normalized = normalizeStateEntry(value, keyId);
+      const normalized = normalizeStateEntry(value, keyId, pageIdHint);
       if (normalized) {
         byKeyId[normalized.keyId] = normalized;
       }

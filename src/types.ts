@@ -23,6 +23,7 @@ export interface LayoutPage {
   id: string;
   title?: string;
   parentPageId?: string;
+  stateLayoutId?: string;
   keys: LayoutKey[];
 }
 

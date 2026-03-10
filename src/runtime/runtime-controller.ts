@@ -248,6 +248,7 @@ export class RuntimeController {
       this.navigation.goBack(registration.device);
       this.renderDevice(registration.device);
       this.renderer.showOk(message.context);
+      await this.refreshState({ forceRender: true });
       return;
     }
 
@@ -255,6 +256,7 @@ export class RuntimeController {
       this.navigation.enterPage(registration.device, keyDefinition.targetPageId, this.layout.rootPageId);
       this.renderDevice(registration.device);
       this.renderer.showOk(message.context);
+      await this.refreshState({ forceRender: true });
       return;
     }
 
@@ -321,19 +323,71 @@ export class RuntimeController {
 
     this.refreshStateInFlight = true;
     try {
-      this.layoutState = await this.apiClient.getLayoutState(this.layout.id);
-      this.clearOffline();
-      if (options.forceRender) {
+      const stateLayoutIds = this.getStateLayoutIds();
+      if (stateLayoutIds.length === 0) {
+        this.clearOffline();
         this.renderAll();
-      } else {
-        this.renderAll();
+        return;
       }
+
+      const mergedByKeyId: LayoutRuntimeState["byKeyId"] = {};
+      let successCount = 0;
+      let lastError: unknown = null;
+
+      for (const stateLayoutId of stateLayoutIds) {
+        try {
+          const state = await this.apiClient.getLayoutState(stateLayoutId);
+          Object.assign(mergedByKeyId, state.byKeyId);
+          successCount += 1;
+        } catch (error) {
+          lastError = error;
+          logger.warn("State request failed for layout page", {
+            stateLayoutId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      if (successCount === 0) {
+        if (lastError instanceof Error) {
+          throw lastError;
+        }
+        throw new Error("No state endpoints were reachable");
+      }
+
+      this.layoutState = { byKeyId: mergedByKeyId };
+      this.clearOffline();
+      this.renderAll();
     } catch (error) {
       this.markOffline(error instanceof Error ? error.message : String(error));
       this.renderAll();
     } finally {
       this.refreshStateInFlight = false;
     }
+  }
+
+  private getStateLayoutIds(): string[] {
+    if (!this.layout) {
+      return [];
+    }
+
+    const ids = new Set<string>();
+    this.devices.forEach((_, deviceId) => {
+      const currentPageId = this.navigation.getCurrentPageId(deviceId, this.layout!.rootPageId);
+      const page = this.layout!.pages[currentPageId] ?? this.layout!.pages[this.layout!.rootPageId];
+      if (page?.stateLayoutId) {
+        ids.add(page.stateLayoutId);
+      }
+    });
+
+    if (ids.size === 0 && this.devices.size === 0) {
+      const firstPageWithState = Object.values(this.layout.pages).find((page) => page.stateLayoutId);
+      if (firstPageWithState?.stateLayoutId) {
+        ids.add(firstPageWithState.stateLayoutId);
+      }
+    }
+
+    return [...ids];
   }
 
   private renderAll(): void {

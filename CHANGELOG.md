@@ -15,6 +15,13 @@ The format is based on Keep a Changelog and Semantic Versioning.
 - Packaging script for `.streamDeckPlugin` output.
 - Local dev mode for simulated key presses and hot reload workflow.
 
+### Changed
+
+- Layout/state normalization now supports Amadeus `layouts/layoutId/buttons` payloads.
+- State polling now resolves per-page `layoutId` endpoints and merges runtime key state.
+- Stable key-id mapping now matches keys and state entries by page + position + route path.
+- Plugin packaging now includes runtime `node_modules` dependencies required on Stream Deck.
+
 ## [0.1.0] - 2026-03-10
 
 ### Added
